@@ -5,12 +5,13 @@ from .errors import require
 
 
 class ProvenanceExplorer:
-    def __init__(self, store, observations, coding, analytics, releases):
+    def __init__(self, store, observations, coding, analytics, releases, sources):
         self.store = store
         self.observations = observations
         self.coding = coding
         self.analytics = analytics
         self.releases = releases
+        self.sources = sources
 
     @staticmethod
     def _story_index(report):
@@ -42,7 +43,10 @@ class ProvenanceExplorer:
                              for kind in sorted(set(excluded_before) | set(excluded_after))
                              if excluded_before.get(kind, 0) != excluded_after.get(kind, 0)}
         return {"release_id": release_id, "frozen_head": old["event_head"],
-                "current_head": current["event_head"], "changed_stories": changes,
+                "current_head": current["event_head"],
+                "region_basis": old["region_basis"],
+                "current_region_basis": current["region_basis"],
+                "changed_stories": changes,
                 "exclusion_changes": exclusion_changes,
                 "same_result": not changes and not exclusion_changes}
 
@@ -73,7 +77,7 @@ class ProvenanceExplorer:
                 continue
             data = row["item"]["data"]
             coding = row["state"]["coding"]
-            key = (row["source"]["region"], data["story_key"], coding["topic"], coding["audience"])
+            key = (row["region"], data["story_key"], coding["topic"], coding["audience"])
             stories[key].append(data["external_id"])
         report = self.analytics.report(spec)
         index = self._story_index(report)
@@ -83,9 +87,17 @@ class ProvenanceExplorer:
             story_items.append({"key": self._story_key(key), "source_external_ids": sorted(ids),
                                 "combined_observation_count": combined["observation_count"] if combined else None,
                                 "combined_stance": combined["stance"] if combined else None})
+        regions = Counter(row["region"] for row in rows)
+        registered = {row["attribution"]["registered_region"] for row in rows}
+        distributed = {row["attribution"]["distribution_region"] for row in rows}
         return {"source_id": source_id, "query_hash": report["query_hash"],
                 "event_head": report["event_head"], "observation_count": len(rows),
-                "categories": dict(sorted(categories.items())), "stories": story_items}
+                "region_basis": report["region_basis"],
+                "attributed_region_counts": dict(sorted(regions.items())),
+                "registered_regions": sorted(registered),
+                "distribution_regions": sorted(distributed),
+                "categories": dict(sorted(categories.items())), "stories": story_items,
+                "source_regions": self.analytics.sources.region_summary(source_id)}
 
     def coding_lineage(self, origin, external_id):
         item = self.observations.describe(origin, external_id)
@@ -98,4 +110,28 @@ class ProvenanceExplorer:
                 "decisions": decisions, "adjudication":
                 {field: ruling[field] for field in ("adjudicator", "topic", "stance", "audience",
                                                    "reason", "event_no")} if ruling else None}
+
+    def region_history(self, source_id):
+        """来源地区更正历史及每段区段可归属的观察记录。"""
+        summary = self.sources.region_summary(source_id)
+        timeline = summary["timeline"]
+        rows = self.store.all("SELECT o.origin,o.external_id,o.revision,o.published_at FROM observations o "
+                              "JOIN observation_heads h ON o.origin=h.origin AND o.external_id=h.external_id "
+                              "AND o.revision=h.revision WHERE o.source_id=? ORDER BY o.published_at",
+                              (source_id,))
+        segments = []
+        for index, segment in enumerate(timeline):
+            next_at = timeline[index + 1]["effective_at"] if index + 1 < len(timeline) else None
+            members = []
+            for row in rows:
+                published_at = row["published_at"]
+                if segment["effective_at"] is not None and published_at < segment["effective_at"]:
+                    continue
+                if next_at is not None and published_at >= next_at:
+                    continue
+                members.append({"origin": row["origin"], "external_id": row["external_id"],
+                                "revision": row["revision"], "published_at": published_at})
+            segments.append({**segment, "until": next_at, "observations": members,
+                             "observation_count": len(members)})
+        return {"source_id": source_id, **summary, "segments": segments}
 

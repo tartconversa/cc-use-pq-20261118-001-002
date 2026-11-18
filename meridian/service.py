@@ -21,14 +21,15 @@ class MeridianService:
         self.observations = ObservationLedger(self.store, self.sources)
         self.coding = CodingDesk(self.store, self.observations, self.sources)
         self.frames = CollectionFrames(self.store, self.sources, self.observations)
-        self.analytics = EvidenceAnalytics(self.store, self.observations, self.sources, self.coding)
+        self.analytics = EvidenceAnalytics(self.store, self.observations, self.sources, self.coding,
+                                           self.frames)
         self.audit = IntegrityAudit(self.store)
         self.comparisons = ComparisonEngine(self.analytics)
         self.diagnostics = ReviewDiagnostics(self.store, self.observations, self.sources,
                                               self.coding, self.analytics, self.frames)
         self.releases = ReleaseShelf(self.store, self.analytics, self.frames, self.audit)
         self.provenance = ProvenanceExplorer(self.store, self.observations, self.coding,
-                                              self.analytics, self.releases)
+                                              self.analytics, self.releases, self.sources)
         self.exports = EvidenceExporter(self.store, self.observations, self.sources,
                                          self.coding, self.analytics, self.releases)
         self.batches = BatchImporter(self.store, self.observations)

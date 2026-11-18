@@ -27,7 +27,10 @@ class ReviewDiagnostics:
                 continue
             pending.append({"origin": data["origin"], "external_id": data["external_id"],
                             "revision": item["revision"], "source_id": data["source_id"],
-                            "region": row["source"]["region"], "published_at": data["published_at"],
+                            "region": row["region"],
+                            "registered_region": row["attribution"]["registered_region"],
+                            "distribution_region": row["attribution"]["distribution_region"],
+                            "published_at": data["published_at"],
                             "status": category, "reviewers": [decision["reviewer"] for decision in state["decisions"]],
                             "story_key": data["story_key"]})
         order = {"disputed": 0, "uncoded": 1, "retracted": 2}
@@ -42,24 +45,33 @@ class ReviewDiagnostics:
         item = self.observations.describe(origin, external_id)
         data = item["data"]
         source = self.sources.describe(data["source_id"])
+        attribution = self.analytics._attribute(source, data["published_at"],
+                                                spec.get("region_basis", "registered"))
         reasons = []
         if not spec["start"] <= data["published_at"] < spec["end"]:
             reasons.append("outside_window")
-        if spec["regions"] and source["region"] not in spec["regions"]:
+        if spec["regions"] and attribution["region"] not in spec["regions"]:
             reasons.append("outside_region")
         state = self.coding.status(origin, external_id, item["revision"])
+        row = {"item": item, "source": source, "state": state,
+               "region": attribution["region"], "attribution": attribution}
         category = None
         if not reasons:
-            category = self.analytics._classify({"item": item, "source": source, "state": state}, spec)
+            category = self.analytics._classify(row, spec)
             if category != "eligible":
                 reasons.append(category)
         report = self.analytics.report(spec)
-        matches = [story for story in report["stories"] if story["region"] == source["region"]
+        matches = [story for story in report["stories"] if story["region"] == attribution["region"]
                    and story["story_key"] == data["story_key"]]
         if category == "eligible" and not matches:
             reasons.append("aggregation_gap")
         return {"origin": origin, "external_id": external_id, "revision": item["revision"],
                 "source": source, "coding_status": state["status"],
+                "region_basis": report["region_basis"], "region": attribution["region"],
+                "registered_region": attribution["registered_region"],
+                "distribution_region": attribution["distribution_region"],
+                "effective_at": attribution["effective_at"],
+                "correction_id": attribution["correction_id"],
                 "eligible": not reasons, "reasons": reasons, "story_rows": matches,
                 "query_hash": report["query_hash"], "event_head": report["event_head"]}
 
@@ -72,9 +84,11 @@ class ReviewDiagnostics:
                 continue
             data = row["item"]["data"]
             coding = row["state"]["coding"]
-            key = (row["source"]["region"], data["story_key"], coding["topic"], coding["audience"])
+            key = (row["region"], data["story_key"], coding["topic"], coding["audience"])
             grouped[key].append({"origin": data["origin"], "external_id": data["external_id"],
-                                 "source_id": data["source_id"], "stance": coding["stance"]})
+                                 "source_id": data["source_id"], "stance": coding["stance"],
+                                 "registered_region": row["attribution"]["registered_region"],
+                                 "distribution_region": row["attribution"]["distribution_region"]})
         conflicts = []
         for key, items in sorted(grouped.items()):
             if len({item["stance"] for item in items}) > 1:
@@ -97,7 +111,12 @@ class ReviewDiagnostics:
         if queue["by_status"].get("disputed", 0):
             warnings.append("unresolved_decisions")
         return {"query_hash": report["query_hash"], "event_head": report["event_head"],
+                "region_basis": report["region_basis"],
                 "quality": quality, "coverage": coverage, "queue": queue["by_status"],
                 "story_conflicts": conflicts["count"], "warnings": warnings,
+                "warnings_detail": [{"code": "collection_coverage",
+                                     "frames": coverage["problems"],
+                                     "crossing_frames": coverage["crossing_frames"]}]
+                if "collection_coverage" in warnings else [],
                 "ready": quality["passed"] and not warnings}
 

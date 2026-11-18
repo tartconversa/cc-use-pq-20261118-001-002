@@ -1,4 +1,4 @@
-"""保留分母的窗口与地区对比。"""
+"""保留分母的窗口与地区对比，显式标注所用地区口径。"""
 from collections import defaultdict
 from .contracts import report_query
 from .errors import require
@@ -21,6 +21,8 @@ class ComparisonEngine:
                 "topic filters must match for comparison")
         require(left["query"]["audiences"] == right["query"]["audiences"], "incompatible_query",
                 "audience filters must match for comparison")
+        require(left["region_basis"] == right["region_basis"], "incompatible_query",
+                "region basis must match for comparison")
         left_regions = self._region_map(left)
         right_regions = self._region_map(right)
         rows = []
@@ -44,11 +46,18 @@ class ComparisonEngine:
                          "story_delta": new_count - old_count, "stances": stances})
         return {"left_query_hash": left["query_hash"], "right_query_hash": right["query_hash"],
                 "left_head": left["event_head"], "right_head": right["event_head"],
+                "region_basis": left["region_basis"],
+                "left_region_attribution": left["region_attribution"],
+                "right_region_attribution": right["region_attribution"],
                 "left_excluded": left["excluded"], "right_excluded": right["excluded"],
                 "regions": rows}
 
-    def regions(self, query, left_region, right_region):
+    def regions(self, query, left_region, right_region, basis=None):
         spec = report_query(query)
+        if basis is not None:
+            require(basis in {"registered", "distribution"}, "invalid_region_basis",
+                    "unsupported region basis")
+            spec = spec | {"region_basis": basis}
         require(left_region != right_region, "same_region", "choose distinct regions")
         if spec["regions"]:
             require(left_region in spec["regions"] and right_region in spec["regions"],
@@ -67,7 +76,9 @@ class ComparisonEngine:
                                 "right_share": round(right_share, 6),
                                 "difference": round(right_share - left_share, 6)}
         return {"query_hash": report["query_hash"], "event_head": report["event_head"],
-                "left": left, "right": right, "stances": stances, "excluded": report["excluded"]}
+                "region_basis": report["region_basis"],
+                "left": left, "right": right, "stances": stances, "excluded": report["excluded"],
+                "region_attribution": report["region_attribution"]}
 
     def topic_matrix(self, query):
         report = self.analytics.report(query)

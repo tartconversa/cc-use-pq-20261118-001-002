@@ -25,6 +25,14 @@ CREATE TABLE IF NOT EXISTS observation_heads (
   origin TEXT NOT NULL, external_id TEXT NOT NULL, revision INTEGER NOT NULL,
   PRIMARY KEY(origin, external_id)
 );
+CREATE TABLE IF NOT EXISTS source_region_corrections (
+  correction_id TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES sources(source_id),
+  region TEXT NOT NULL, effective_at TEXT NOT NULL, basis TEXT NOT NULL,
+  reason TEXT NOT NULL, recorded_at TEXT NOT NULL, event_no INTEGER NOT NULL,
+  UNIQUE(source_id, effective_at)
+);
+CREATE INDEX IF NOT EXISTS source_region_corrections_source
+  ON source_region_corrections(source_id, effective_at);
 CREATE TABLE IF NOT EXISTS decisions (
   decision_id TEXT PRIMARY KEY, origin TEXT NOT NULL, external_id TEXT NOT NULL,
   revision INTEGER NOT NULL, reviewer TEXT NOT NULL, topic TEXT NOT NULL,
@@ -59,7 +67,8 @@ CREATE TABLE IF NOT EXISTS batch_rows (
 );
 CREATE TABLE IF NOT EXISTS releases (
   release_id TEXT PRIMARY KEY, query_hash TEXT NOT NULL, event_head INTEGER NOT NULL,
-  preview_token TEXT NOT NULL, report_json TEXT NOT NULL, created_at TEXT NOT NULL
+  preview_token TEXT NOT NULL, report_json TEXT NOT NULL,
+  region_basis TEXT NOT NULL DEFAULT 'registered', created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS report_queries (
   query_hash TEXT PRIMARY KEY, spec_json TEXT NOT NULL
@@ -100,6 +109,9 @@ class Store:
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.execute("PRAGMA busy_timeout=15000")
         self.db.executescript(SCHEMA)
+        columns = {row["name"] for row in self.db.execute("PRAGMA table_info(releases)")}
+        if "region_basis" not in columns:
+            self.db.execute("ALTER TABLE releases ADD COLUMN region_basis TEXT NOT NULL DEFAULT 'registered'")
 
     def close(self):
         self.db.close()

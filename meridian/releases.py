@@ -47,9 +47,11 @@ class ReleaseShelf:
             require(current["quality"]["passed"], "quality_failed", "report failed quality gate",
                     reasons=current["quality"]["reasons"])
             now = utc_now()
-            self.store.db.execute("INSERT INTO releases(release_id,query_hash,event_head,preview_token,report_json,created_at) "
-                                  "VALUES(?,?,?,?,?,?)", (release_id, digest(spec), current["report"]["event_head"],
-                                                           token, encode(current["report"]), now))
+            self.store.db.execute("INSERT INTO releases(release_id,query_hash,event_head,preview_token,"
+                                  "report_json,region_basis,created_at) VALUES(?,?,?,?,?,?,?)",
+                                  (release_id, digest(spec), current["report"]["event_head"],
+                                   token, encode(current["report"]),
+                                   current["report"]["region_basis"], now))
             self.store.event("report_published", release_id, token, now)
         return self.describe(release_id) | {"duplicate": False}
 
@@ -58,6 +60,7 @@ class ReleaseShelf:
         require(row is not None, "release_missing", "release not found")
         return {"release_id": release_id, "event_head": row["event_head"],
                 "query_hash": row["query_hash"], "preview_token": row["preview_token"],
+                "region_basis": row["region_basis"],
                 "report": decode(row["report_json"]), "created_at": row["created_at"]}
 
     def compare(self, release_id):
@@ -65,10 +68,15 @@ class ReleaseShelf:
         query = released["report"]["query"]
         current = self.analytics.report(query)
         previous = released["report"]
+        require(previous.get("region_basis", "registered") == released["region_basis"],
+                "release_basis_mismatch", "frozen report lacks its publication region basis")
         return {"release_id": release_id, "frozen_head": released["event_head"],
                 "current_head": current["event_head"],
+                "region_basis": released["region_basis"],
+                "current_region_basis": current["region_basis"],
                 "same_result": previous["stories"] == current["stories"] and
-                               previous["excluded"] == current["excluded"],
+                               previous["excluded"] == current["excluded"] and
+                               previous.get("regions") == current["regions"],
                 "story_count_delta": current["story_count"] - previous["story_count"],
                 "excluded_delta": {key: current["excluded"].get(key, 0) - previous["excluded"].get(key, 0)
                                    for key in sorted(set(current["excluded"]) | set(previous["excluded"]))}}

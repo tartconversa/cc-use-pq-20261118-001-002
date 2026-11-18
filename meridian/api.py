@@ -14,6 +14,15 @@ class SourceInput(BaseModel):
     audiences: list[str]
 
 
+class RegionCorrectionInput(BaseModel):
+    correction_id: str | None = None
+    source_id: str
+    region: str
+    effective_at: str
+    basis: str
+    reason: str | None = None
+
+
 class ObservationInput(BaseModel):
     origin: str
     external_id: str
@@ -55,6 +64,7 @@ class ReportInput(BaseModel):
     regions: list[str] = Field(default_factory=list)
     topics: list[str] = Field(default_factory=list)
     audiences: list[str] = Field(default_factory=list)
+    region_basis: str = "registered"
 
 
 class ReleaseInput(BaseModel):
@@ -95,6 +105,7 @@ class RegionComparisonInput(BaseModel):
     query: ReportInput
     left_region: str
     right_region: str
+    region_basis: str | None = None
 
 
 def create_app(path="meridian.sqlite3"):
@@ -127,6 +138,18 @@ def create_app(path="meridian.sqlite3"):
     @app.post("/sources/{source_id}/deactivate")
     def deactivate_source(source_id: str):
         return service.sources.deactivate(source_id)
+
+    @app.post("/sources/region-corrections")
+    def correct_region(payload: RegionCorrectionInput):
+        return service.sources.correct_region(payload.model_dump())
+
+    @app.get("/sources/{source_id}/regions")
+    def source_regions(source_id: str):
+        return service.provenance.region_history(source_id)
+
+    @app.get("/sources/{source_id}/region-at")
+    def source_region_at(source_id: str, at: str):
+        return {"source_id": source_id, **service.sources.region_at(source_id, at)}
 
     @app.post("/observations")
     def ingest(payload: ObservationInput):
@@ -221,13 +244,18 @@ def create_app(path="meridian.sqlite3"):
     def source_breakdown(payload: ReportInput):
         return service.exports.source_breakdown(payload.model_dump())
 
+    @app.post("/reports/region-reconciliation")
+    def region_reconciliation(payload: ReportInput):
+        return service.analytics.reconciliation(payload.model_dump())
+
     @app.post("/reports/compare-windows")
     def compare_windows(payload: WindowComparisonInput):
         return service.comparisons.windows(payload.left.model_dump(), payload.right.model_dump())
 
     @app.post("/reports/compare-regions")
     def compare_regions(payload: RegionComparisonInput):
-        return service.comparisons.regions(payload.query.model_dump(), payload.left_region, payload.right_region)
+        return service.comparisons.regions(payload.query.model_dump(), payload.left_region,
+                                           payload.right_region, basis=payload.region_basis)
 
     @app.post("/releases")
     def publish(payload: ReleaseInput):

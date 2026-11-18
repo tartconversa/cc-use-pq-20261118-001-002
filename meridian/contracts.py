@@ -42,6 +42,9 @@ def string_set(value, name, maximum=32):
     return result
 
 
+REGION_BASES = {"registered", "distribution"}
+
+
 def source(payload):
     require(isinstance(payload, dict), "invalid_source", "source must be an object")
     require(set(payload) == {"source_id", "region", "outlet", "topics", "audiences"},
@@ -53,6 +56,25 @@ def source(payload):
         "topics": string_set(payload["topics"], "topics"),
         "audiences": string_set(payload["audiences"], "audiences"),
     }
+
+
+def region_correction(payload):
+    require(isinstance(payload, dict), "invalid_region_correction",
+            "region correction must be an object")
+    required = {"source_id", "region", "effective_at", "basis"}
+    allowed = required | {"reason", "correction_id"}
+    require(required <= set(payload) <= allowed, "invalid_region_correction",
+            "region correction fields mismatch")
+    data = {
+        "source_id": text(payload["source_id"], "source_id"),
+        "region": text(payload["region"], "region"),
+        "effective_at": timestamp(payload["effective_at"], "effective_at"),
+        "basis": text(payload["basis"], "basis", 800),
+        "reason": text(payload.get("reason") or "region correction", "reason", 800),
+    }
+    if payload.get("correction_id") is not None:
+        data["correction_id"] = text(payload["correction_id"], "correction_id")
+    return data
 
 
 def observation(payload):
@@ -94,8 +116,9 @@ def adjudication(payload):
 
 
 def report_query(payload):
-    fields = {"start", "end", "regions", "topics", "audiences"}
-    require(isinstance(payload, dict) and set(payload) == fields, "invalid_query", "query fields mismatch")
+    base = {"start", "end", "regions", "topics", "audiences"}
+    require(isinstance(payload, dict) and base <= set(payload) <= base | {"region_basis"},
+            "invalid_query", "query fields mismatch")
     start = timestamp(payload["start"], "start")
     end = timestamp(payload["end"], "end")
     require(start < end, "invalid_window", "start must precede end")
@@ -105,7 +128,9 @@ def report_query(payload):
         require(isinstance(value, list) and len(value) <= 32, "invalid_query", f"{key} must be list")
         filters[key] = sorted({text(item, key, 80) for item in value})
         require(len(filters[key]) == len(value), "invalid_query", f"duplicate {key}")
-    return {"start": start, "end": end, **filters}
+    region_basis = payload.get("region_basis", "registered")
+    require(region_basis in REGION_BASES, "invalid_region_basis", "unsupported region basis")
+    return {"start": start, "end": end, **filters, "region_basis": region_basis}
 
 
 def canonical_json(raw):
